@@ -3,3 +3,5 @@ matplotlib
 seaborn
 scikit-learn
 mlxtend
+streamlit
+joblib
