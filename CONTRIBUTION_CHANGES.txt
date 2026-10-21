@@ -1,0 +1,100 @@
+STUDENT PLACEMENT PREDICTION - CONTRIBUTION CHANGE SUMMARY
+=========================================================
+
+Branch
+------
+sohail-changes
+
+Overview
+--------
+This branch improves contributor onboarding, makes data loading and input
+validation more reliable, clarifies model evaluation, and adds automated test
+coverage and continuous integration.
+
+Changes made
+------------
+
+1. Project documentation
+   - Added README.md with environment setup, dashboard launch, CLI, experiment,
+     test commands, repository layout, contribution guidance, and responsible
+     use notes.
+   - Added a caution that the repository does not identify the dataset's
+     original source or license. Redistribution and reuse permissions should
+     be confirmed before publishing or reusing the data.
+
+2. Dependencies and automated testing
+   - Added compatible version ranges for the runtime dependencies in
+     requirements.txt.
+   - Removed mlxtend, which was only used by the old standalone student script
+     and is no longer needed after consolidating that script on the shared
+     model pipeline.
+   - Added requirements-dev.txt for pytest and the development requirements.
+   - Added a GitHub Actions workflow to install dependencies and run pytest on
+     pushes and pull requests using Python 3.11 and 3.13.
+
+3. Data and model path reliability
+   - Data lookup now checks the current directory, project root, and the
+     project-root parent, and handles common Placement.csv capitalization.
+   - The default saved-model path is resolved from the project root instead of
+     depending on the shell's current directory.
+   - Added tests for loading data and the model after changing to another
+     working directory.
+
+4. Input validation
+   - Student inference input now rejects empty inputs and anything other than
+     exactly one student row.
+   - Duplicate input columns are rejected.
+   - Non-finite numeric values such as NaN and positive/negative infinity are
+     rejected.
+   - Added tests covering empty, multi-row, and non-finite inputs.
+
+5. Model evaluation and dashboard reporting
+   - Replaced fixed sidebar and evaluation-card counts with values derived
+     from the saved model's holdout results.
+   - Made the evaluation split sizes and class counts dynamic.
+   - Removed outdated hard-coded performance claims and wording that implied
+     the model was explicitly optimized for placement precision.
+   - Added a threshold comparison for 0.30 through 0.70. It uses out-of-fold
+     predictions from the training partition only; it does not use the holdout
+     test set to select a threshold.
+   - Added a dashboard test to verify the threshold trade-off section renders.
+   - Removed the fixed submission deadline from the About page.
+
+6. Shared command-line prediction
+   - Reworked student.py to collect the features defined in the shared schema
+     and call the same saved pipeline and validation used by the dashboard.
+   - Added a CLI test to verify prompt collection follows the shared feature
+     schema.
+
+7. Experiment output
+   - Updated compare_models.py to calculate and display holdout sample counts
+     instead of assuming a fixed holdout size.
+
+Files changed
+-------------
+- .github/workflows/tests.yml
+- README.md
+- requirements-dev.txt
+- requirements.txt
+- app.py
+- compare_models.py
+- src/data.py
+- src/model.py
+- student.py
+- tests/test_app.py
+- tests/test_pipeline.py
+
+Verification
+------------
+- Command: python -m pytest tests\test_pipeline.py tests\test_app.py -q
+- Result: 25 passed.
+- Two existing Matplotlib deprecation warnings were reported by Seaborn during
+  the EDA dashboard test.
+- Command: python -m pip check
+- Result: No broken requirements found.
+- Git diff whitespace check passed.
+
+Git status
+----------
+The changes are on the local sohail-changes branch. They have not been
+committed or pushed.
