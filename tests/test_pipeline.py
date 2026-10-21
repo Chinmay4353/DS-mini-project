@@ -10,6 +10,7 @@ import pandas as pd
 from src.data import (
     load_raw_data,
     get_clean_data,
+    find_data_file,
     validate_input_dataframe,
     NUMERICAL_FEATURES,
     CATEGORICAL_FEATURES,
@@ -18,6 +19,7 @@ from src.model import (
     load_pipeline,
     predict_single_student,
     compute_benchmark_comparison,
+    compute_threshold_comparison,
     DEFAULT_MODEL_PATH,
 )
 
@@ -28,6 +30,18 @@ def test_raw_data_loading():
     assert "status" in df.columns
     assert "salary" in df.columns
     assert "sl_no" in df.columns
+
+
+def test_data_loading_is_independent_of_current_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert Path(find_data_file()).name == "Placement.csv"
+    assert load_raw_data().shape == (215, 15)
+
+
+def test_default_model_path_is_independent_of_current_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert DEFAULT_MODEL_PATH.is_absolute()
+    assert "preprocessor" in load_pipeline()["pipeline"].named_steps
 
 
 def test_clean_data_leakage_free():
@@ -132,11 +146,80 @@ def test_input_validation_catches_invalid_category():
     assert any("Invalid option" in e for e in errors)
 
 
+def test_input_validation_rejects_empty_or_multiple_rows():
+    valid_profile = {
+        "ssc_p": 70.0,
+        "hsc_p": 78.0,
+        "degree_p": 76.0,
+        "etest_p": 85.0,
+        "mba_p": 70.0,
+        "gender": "M",
+        "ssc_b": "Central",
+        "hsc_b": "Central",
+        "hsc_s": "Commerce",
+        "degree_t": "Comm&Mgmt",
+        "workex": "Yes",
+        "specialisation": "Mkt&Fin",
+    }
+    is_valid, errors = validate_input_dataframe(pd.DataFrame())
+    assert not is_valid
+    assert any("no rows" in error for error in errors)
+
+    is_valid, errors = validate_input_dataframe(pd.DataFrame([valid_profile, valid_profile]))
+    assert not is_valid
+    assert any("exactly one student row" in error for error in errors)
+
+
+def test_input_validation_rejects_non_finite_percentages():
+    for invalid_value in (float("nan"), float("inf"), float("-inf")):
+        profile = {
+            "ssc_p": invalid_value,
+            "hsc_p": 78.0,
+            "degree_p": 76.0,
+            "etest_p": 85.0,
+            "mba_p": 70.0,
+            "gender": "M",
+            "ssc_b": "Central",
+            "hsc_b": "Central",
+            "hsc_s": "Commerce",
+            "degree_t": "Comm&Mgmt",
+            "workex": "Yes",
+            "specialisation": "Mkt&Fin",
+        }
+        is_valid, errors = validate_input_dataframe(pd.DataFrame([profile]))
+        assert not is_valid
+        assert any("finite percentage" in error for error in errors)
+
+
 def test_benchmark_comparison_generates_dataframe():
     df_comp = compute_benchmark_comparison()
     assert len(df_comp) == 5
     assert "Logistic Regression (L2, C=1.0)" in df_comp["Algorithm"].values
     assert "Random Forest (n=100, default)" in df_comp["Algorithm"].values
+
+
+def test_threshold_comparison_uses_training_oof_scores():
+    thresholds = compute_threshold_comparison()
+    assert thresholds["Threshold"].tolist() == [0.30, 0.40, 0.50, 0.60, 0.70]
+    assert thresholds["Training Samples"].nunique() == 1
+    assert thresholds["Training Samples"].iloc[0] == 172
+    for metric in ("Accuracy (%)", "Precision (%)", "Recall (%)", "Specificity (%)", "F1-Score (%)"):
+        assert thresholds[metric].between(0, 100).all()
+
+
+def test_cli_collects_features_from_the_shared_schema(monkeypatch):
+    from student import prompt_student_profile
+
+    responses = iter([
+        "70", "71", "72", "73", "74",
+        "M", "Central", "Central", "Commerce", "Comm&Mgmt", "Yes", "Mkt&Fin",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(responses))
+
+    profile = prompt_student_profile()
+    assert list(profile) == NUMERICAL_FEATURES + CATEGORICAL_FEATURES
+    assert profile["ssc_p"] == 70.0
+    assert profile["specialisation"] == "Mkt&Fin"
 
 
 def test_profile_validation_12th_hsc_compatible():

@@ -117,6 +117,8 @@ def test_app_evaluation_page():
     metric_labels = [m.label for m in at.metric]
     assert "Test Accuracy" in metric_labels
     assert "Test Precision" in metric_labels
+    markdown_texts = " ".join([m.value for m in at.markdown])
+    assert "Decision Threshold Trade-offs" in markdown_texts
 
 
 def test_app_about_page():
