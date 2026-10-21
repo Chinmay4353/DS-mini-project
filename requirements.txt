@@ -1,7 +1,6 @@
-pandas
-matplotlib
-seaborn
-scikit-learn
-mlxtend
-streamlit
-joblib
+pandas>=2.0,<4
+matplotlib>=3.7,<4
+seaborn>=0.12,<1
+scikit-learn>=1.2,<2
+streamlit>=1.49,<2
+joblib>=1.2,<2

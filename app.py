@@ -34,6 +34,7 @@ from src.model import (
     predict_single_student,
     explain_single_prediction,
     compute_benchmark_comparison,
+    compute_threshold_comparison,
     DEFAULT_MODEL_PATH,
 )
 
@@ -300,6 +301,12 @@ def get_cached_benchmark():
     return compute_benchmark_comparison()
 
 
+@st.cache_data
+def get_cached_threshold_comparison():
+    """Compare thresholds using out-of-fold training probabilities."""
+    return compute_threshold_comparison()
+
+
 # Initialize state safely
 try:
     raw_df = get_cached_raw_data()
@@ -331,13 +338,23 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("#### System Configuration")
+    sidebar_test_results = model_bundle["test_results"]
+    sidebar_train_size = sidebar_test_results["train_size"]
+    sidebar_test_size = sidebar_test_results["test_size"]
+    sidebar_placed = sidebar_test_results["tp"] + sidebar_test_results["fn"]
+    sidebar_not_placed = sidebar_test_results["tn"] + sidebar_test_results["fp"]
     st.markdown("**Selected Model:** Logistic Regression ($L_2$)")
     st.markdown("**Regularization:** $C = 1.0$ (Ridge)")
-    st.markdown("**Training Set:** 172 students (80%)")
-    st.markdown("**Holdout Test:** 43 students (20%)")
-    st.markdown("**Test Accuracy:** **86.05%** (37/43)")
-    st.markdown("**Test Precision:** **92.86%**")
-    st.markdown("**Submission Deadline:** 23 October 2026")
+    st.markdown(f"**Training Set:** {sidebar_train_size} students (80%)")
+    st.markdown(f"**Holdout Test:** {sidebar_test_size} students (20%)")
+    st.markdown(
+        f"**Test Accuracy:** **{sidebar_test_results['accuracy']*100:.2f}%** "
+        f"({sidebar_test_results['tn'] + sidebar_test_results['tp']}/{sidebar_test_size})"
+    )
+    st.markdown(f"**Test Precision:** **{sidebar_test_results['precision']*100:.2f}%**")
+    st.caption(
+        f"Holdout classes: {sidebar_placed} placed, {sidebar_not_placed} not placed."
+    )
 
     st.markdown("---")
     st.caption("Department of Data Science & Engineering")
@@ -992,12 +1009,11 @@ elif page == "🎯 Student Prediction":
                     st.markdown("#### C. Why Was Logistic Regression Selected Over Other Candidates?")
                     st.markdown(
                         r"""
-                        In our pre-implementation benchmarking experiment ([`compare_models.py`](file:///c:/Users/Asus/DS-mini-project/compare_models.py)), 
+                        In the benchmarking experiment (`compare_models.py`),
                         candidate algorithms were evaluated under identical 5-fold stratified cross-validation on the training set and verified on the untouched holdout test set:
                         
-                        - **Holdout Accuracy:** Logistic Regression achieved **$86.05\%$** ($37/43$ correct), outperforming Random Forest ($83.72\%$) and Decision Trees ($67.44\% - 69.77\%$).
-                        - **Holdout Precision:** Logistic Regression attained **$92.86\%$** precision, producing only **2 False Positives** (versus 5 for Random Forest).
-                        - **Overfitting Resistance:** Single Decision Trees overfitted severely on this dataset size, experiencing an accuracy drop of over $10\%$ from CV to test. Logistic Regression maintained a negligible generalization gap of **$-0.60\%$**.
+                        - Model metrics are computed from the current saved model and displayed on the Model Evaluation page.
+                        - The holdout set contains only a small number of students, so small metric differences should not be treated as proof that one algorithm is universally superior.
                         - **Model Interpretability:** Logistic Regression yields direct odds ratios ($\exp(\beta)$) and transparent linear weights, providing an ideal academic framework for thesis defense.
                         """
                     )
@@ -1008,7 +1024,7 @@ elif page == "🎯 Student Prediction":
                         f"""
                         - **The Class Label ({pred_label}):** Reflects the discrete binary decision derived from applying the 0.50 probability cutoff.
                         - **The Probability Score ({prob_placed*100:.1f}%):** Reflects the mathematical likelihood that a student with this feature profile shares the placement outcome of historical students in `Placement.csv`.
-                        - **Error Margins:** The model is not infallible. On the held-out test set, it had 2 False Positives (predicted Placed, actually unplaced) and 4 False Negatives (predicted Not Placed, actually placed).
+                        - **Error Margins:** The model is not infallible. On the held-out test set, it had {model_bundle['test_results']['fp']} False Positives (predicted Placed, actually unplaced) and {model_bundle['test_results']['fn']} False Negatives (predicted Not Placed, actually placed).
                         - **Cohort Specificity:** These findings are derived from a historical dataset of 215 students and may not generalize unconditionally to institutions with differing curricula or industry partnerships.
                         """
                     )
@@ -1070,10 +1086,10 @@ elif page == "🎯 Student Prediction":
                             <b>3. Leakage-Free Preprocessing:</b> "Continuous variables are normalized via <code>StandardScaler</code> and categorical variables are encoded with reference-category <code>OneHotEncoder</code> strictly inside a scikit-learn <code>Pipeline</code>, guaranteeing zero data leakage between training and testing folds."
                         </div>
                         <div class="viva-box">
-                            <b>4. Performance vs. Ensembles:</b> "In our empirical benchmarking, Logistic Regression attained <b>86.05% test accuracy</b> and <b>92.86% precision</b> with only 2 False Positives. Decision Trees overfitted heavily (dropping to 67.4% test accuracy), while Random Forest had higher false positives (5)."
+                            <b>4. Performance vs. Ensembles:</b> "The Model Evaluation page reports measured holdout and cross-validation metrics for the candidate algorithms. These estimates are based on a small historical dataset and should be interpreted cautiously."
                         </div>
                         <div class="viva-box">
-                            <b>5. Minimizing Asymmetric Cost:</b> "In campus recruitment, False Positives (predicting placed when a student fails) carry the highest institutional harm because struggling students are deprived of remedial workshops. Our model explicitly optimized for high placement precision."
+                            <b>5. Threshold Trade-offs:</b> "The standard 0.50 threshold is used for this prediction. The evaluation page compares alternative thresholds using out-of-fold training predictions only; it does not tune on the holdout test set."
                         </div>
                         <div class="viva-box">
                             <b>6. Academic Safety & Scope:</b> "Identifiers (<code>sl_no</code>) and post-placement salary (<code>salary</code>) were removed to avoid 100% target leakage. Furthermore, diploma students are safely separated because `Placement.csv` contains zero polytechnic entrants, preventing invalid zero-imputation."
@@ -1172,17 +1188,27 @@ elif page == "📈 Model Evaluation":
 
     t_res = model_bundle["test_results"]
     cv_res = model_bundle["cv_results"]
+    test_size = t_res["test_size"]
+    test_placed = t_res["tp"] + t_res["fn"]
+    test_not_placed = t_res["tn"] + t_res["fp"]
+    train_placed = int((raw_df["status"] == "Placed").sum()) - test_placed
+    train_not_placed = len(raw_df) - train_placed - test_size
+    placed_f1 = 2 * t_res["tp"] / (2 * t_res["tp"] + t_res["fp"] + t_res["fn"])
+    not_placed_f1 = 2 * t_res["tn"] / (
+        2 * t_res["tn"] + t_res["fp"] + t_res["fn"]
+    )
+    macro_f1 = (placed_f1 + not_placed_f1) / 2
 
     # Top KPI Cards
     col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
     with col_m1:
-        st.metric("Test Accuracy", f"{t_res['accuracy']*100:.2f}%", "37 / 43 correct")
+        st.metric("Test Accuracy", f"{t_res['accuracy']*100:.2f}%", f"{t_res['tn'] + t_res['tp']} / {test_size} correct")
     with col_m2:
-        st.metric("Test Precision", f"{t_res['precision']*100:.2f}%", "26 / 28 placed")
+        st.metric("Test Precision", f"{t_res['precision']*100:.2f}%", f"{t_res['tp']} / {t_res['tp'] + t_res['fp']} predicted placed")
     with col_m3:
-        st.metric("Test Recall", f"{t_res['recall']*100:.2f}%", "26 / 30 placed")
+        st.metric("Test Recall", f"{t_res['recall']*100:.2f}%", f"{t_res['tp']} / {test_placed} actual placed")
     with col_m4:
-        st.metric("Test F1-Score", f"{t_res['f1']*100:.2f}%", "Macro F1: 84.1%")
+        st.metric("Test F1-Score", f"{t_res['f1']*100:.2f}%", f"Macro F1: {macro_f1*100:.1f}%")
     with col_m5:
         st.metric("Train CV Accuracy", f"{cv_res['cv_accuracy_mean']*100:.2f}%", f"+/- {cv_res['cv_accuracy_std']*100:.2f}%")
 
@@ -1191,7 +1217,7 @@ elif page == "📈 Model Evaluation":
     col_cm, col_gap = st.columns([1, 1])
 
     with col_cm:
-        st.markdown('<div class="section-title">Confusion Matrix (Held-out Test Set, N=43)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-title">Confusion Matrix (Held-out Test Set, N={test_size})</div>', unsafe_allow_html=True)
         cm_matrix = np.array([[t_res['tn'], t_res['fp']], [t_res['fn'], t_res['tp']]])
         fig, ax = plt.subplots(figsize=(5.5, 3.8), dpi=130)
         sns.heatmap(
@@ -1205,7 +1231,7 @@ elif page == "📈 Model Evaluation":
             ax=ax,
             annot_kws={"size": 13, "weight": "bold"}
         )
-        ax.set_title("Test Confusion Matrix (Logistic Regression, N=43)", fontsize=11, fontweight="bold", pad=8)
+        ax.set_title(f"Test Confusion Matrix (Logistic Regression, N={test_size})", fontsize=11, fontweight="bold", pad=8)
         fig.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
@@ -1218,16 +1244,15 @@ elif page == "📈 Model Evaluation":
         st.markdown('<div class="section-title">Generalization & Split Analysis</div>', unsafe_allow_html=True)
         st.markdown(
             f"""
-            - **Training Partition (80%):** 172 students ($118$ Placed, $54$ Not Placed)
-            - **Held-out Test Partition (20%):** 43 students ($30$ Placed, $13$ Not Placed)
+            - **Training Partition (80%):** {t_res['train_size']} students ({train_placed} Placed, {train_not_placed} Not Placed)
+            - **Held-out Test Partition (20%):** {test_size} students ({test_placed} Placed, {test_not_placed} Not Placed)
             - **Stratified 5-Fold CV Accuracy (Train):** `{cv_res['cv_accuracy_mean']*100:.2f}% +/- {cv_res['cv_accuracy_std']*100:.2f}%`
             - **Stratified 5-Fold CV F1-Score (Train):** `{cv_res['cv_f1_mean']*100:.2f}% +/- {cv_res['cv_f1_std']*100:.2f}%`
             - **Holdout Test Accuracy:** `{t_res['accuracy']*100:.2f}%`
             - **Generalization Gap (CV - Test):** `{(cv_res['cv_accuracy_mean'] - t_res['accuracy'])*100:+.2f}%`
             
             <div class="notice-box">
-                <b>Generalization Verdict:</b> The gap between training cross-validation (85.45%) and holdout test accuracy (86.05%) 
-                is only <b>0.60%</b>. This demonstrates exceptional generalization stability without data leakage or variance collapse.
+                <b>Interpretation:</b> Cross-validation and holdout metrics are estimates from a small dataset, not guarantees of future performance. Keep the holdout set untouched when selecting model settings or decision thresholds.
             </div>
             """,
             unsafe_allow_html=True,
@@ -1241,6 +1266,25 @@ elif page == "📈 Model Evaluation":
 
     benchmark_df = get_cached_benchmark()
     st.dataframe(benchmark_df, width="stretch")
+
+    st.markdown('<div class="section-title">Decision Threshold Trade-offs</div>', unsafe_allow_html=True)
+    st.markdown(
+        "The model currently predicts placement at probability ≥ 0.50. "
+        "This table compares thresholds using out-of-fold predictions from the training partition only; "
+        "the holdout set is not used to select a threshold."
+    )
+    threshold_df = get_cached_threshold_comparison()
+    st.dataframe(
+        threshold_df.style.format({
+            "Threshold": "{:.2f}",
+            "Accuracy (%)": "{:.1f}",
+            "Precision (%)": "{:.1f}",
+            "Recall (%)": "{:.1f}",
+            "Specificity (%)": "{:.1f}",
+            "F1-Score (%)": "{:.1f}",
+        }),
+        width="stretch",
+    )
 
     # Visual Bar Comparison of Test Metrics
     fig_bench, ax_b = plt.subplots(figsize=(8.5, 4.0), dpi=130)
@@ -1384,6 +1428,5 @@ elif page == "📖 About & Methodology":
             - **Architecture:** Decoupled `src/data.py` (schemas & validation) and `src/model.py` (pipelines & inference)
             - **Experiment Script:** `compare_models.py` (Reproducible 5-fold CV & test benchmarking)
             - **Serialized Artifact:** `models/placement_model.joblib`
-            - **Submission Deadline:** 23 October 2026
             """
         )

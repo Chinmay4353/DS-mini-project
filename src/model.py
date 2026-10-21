@@ -6,7 +6,12 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
+from sklearn.model_selection import (
+    train_test_split,
+    StratifiedKFold,
+    cross_validate,
+    cross_val_predict,
+)
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -26,11 +31,12 @@ from sklearn.metrics import (
 from src.data import (
     NUMERICAL_FEATURES,
     CATEGORICAL_FEATURES,
+    PROJECT_ROOT,
     get_clean_data,
     validate_input_dataframe,
 )
 
-DEFAULT_MODEL_PATH = Path("models") / "placement_model.joblib"
+DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "placement_model.joblib"
 RANDOM_STATE = 42
 
 
@@ -326,3 +332,40 @@ def compute_benchmark_comparison(random_state=RANDOM_STATE):
 
     return pd.DataFrame(rows)
 
+
+def compute_threshold_comparison(random_state=RANDOM_STATE):
+    """
+    Compare classification thresholds using out-of-fold training probabilities only.
+
+    The holdout set is deliberately excluded so it remains an unbiased final
+    evaluation set rather than being used to choose a decision threshold.
+    """
+    X, y = get_clean_data()
+    X_train, _, y_train, _ = train_test_split(
+        X, y, test_size=0.20, stratify=y, random_state=random_state
+    )
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+    probabilities = cross_val_predict(
+        build_pipeline(),
+        X_train,
+        y_train,
+        cv=cv,
+        method="predict_proba",
+    )[:, 1]
+
+    rows = []
+    for threshold in (0.30, 0.40, 0.50, 0.60, 0.70):
+        predictions = (probabilities >= threshold).astype(int)
+        tn, fp, fn, tp = confusion_matrix(y_train, predictions, labels=[0, 1]).ravel()
+        rows.append({
+            "Threshold": threshold,
+            "Accuracy (%)": accuracy_score(y_train, predictions) * 100,
+            "Precision (%)": precision_score(y_train, predictions, zero_division=0) * 100,
+            "Recall (%)": recall_score(y_train, predictions, zero_division=0) * 100,
+            "Specificity (%)": tn / (tn + fp) * 100 if tn + fp else 0.0,
+            "F1-Score (%)": f1_score(y_train, predictions, zero_division=0) * 100,
+            "Predicted Placed": int(predictions.sum()),
+            "Training Samples": int(len(y_train)),
+        })
+
+    return pd.DataFrame(rows)

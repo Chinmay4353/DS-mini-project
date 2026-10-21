@@ -6,6 +6,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # Feature Schema Definitions
 NUMERICAL_FEATURES = ["ssc_p", "hsc_p", "degree_p", "etest_p", "mba_p"]
 CATEGORICAL_FEATURES = ["gender", "ssc_b", "hsc_b", "hsc_s", "degree_t", "workex", "specialisation"]
@@ -194,10 +196,24 @@ SAMPLE_PROFILES = {
 
 
 def find_data_file(filename="Placement.csv"):
-    """Locate dataset file safely across case-sensitive environments."""
-    for path in [Path(filename), Path("Placement.csv"), Path("placement.csv"), Path("../Placement.csv")]:
+    """Locate the dataset from the caller's directory or the project root."""
+    requested_path = Path(filename)
+    if requested_path.is_absolute():
+        candidates = [requested_path]
+    else:
+        search_roots = [Path.cwd(), PROJECT_ROOT, PROJECT_ROOT.parent]
+        candidates = [root / requested_path for root in search_roots]
+
+    if not requested_path.is_absolute() and requested_path.name.lower() == "placement.csv":
+        candidates.extend(
+            root / name
+            for root in search_roots
+            for name in ("Placement.csv", "placement.csv")
+        )
+
+    for path in candidates:
         if path.exists():
-            return str(path)
+            return str(path.resolve())
     raise FileNotFoundError(f"Dataset '{filename}' could not be located in workspace.")
 
 
@@ -237,6 +253,15 @@ def validate_input_dataframe(input_df):
     """
     errors = []
     expected_cols = NUMERICAL_FEATURES + CATEGORICAL_FEATURES
+    if input_df.empty:
+        return False, ["Input must contain exactly one student row; received no rows."]
+    if len(input_df) != 1:
+        errors.append(f"Input must contain exactly one student row; received {len(input_df)}.")
+
+    duplicate_columns = input_df.columns[input_df.columns.duplicated()].tolist()
+    if duplicate_columns:
+        errors.append(f"Input contains duplicate columns: {duplicate_columns}.")
+
     for col in expected_cols:
         if col not in input_df.columns:
             errors.append(f"Missing required feature '{col}'.")
@@ -249,10 +274,13 @@ def validate_input_dataframe(input_df):
         val = input_df[col].iloc[0]
         try:
             val_float = float(val)
+            if not np.isfinite(val_float):
+                errors.append(f"Value for {col} must be a finite percentage.")
+                continue
             meta = FEATURE_METADATA.get(col, {})
             if val_float < meta.get("min", 0.0) or val_float > meta.get("max", 100.0):
                 errors.append(f"{meta.get('label', col)} ({val_float}) is outside allowable range [0, 100].")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             errors.append(f"Value for {col} must be a valid float.")
 
     # Check categorical options
@@ -415,4 +443,3 @@ def validate_student_profile(profile_dict):
         "advisories": advisories,
         "clean_model_input": clean_model_input,
     }
-

@@ -140,7 +140,7 @@ def run_experiment():
     """Execute stratified holdout split, 5-fold CV on train set, and test evaluation."""
     X, y, num_features, cat_features = load_and_validate_data()
 
-    # Reserve 20% stratified holdout test set (N=43), untouched during model selection
+    # Reserve a stratified 20% holdout test set, untouched during model selection
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.20, stratify=y, random_state=RANDOM_SEED
     )
@@ -261,7 +261,7 @@ def run_experiment():
 
     # Detailed per-candidate inspection
     print("\n" + "=" * 80)
-    print("DETAILED HOLDOUT TEST EVALUATION PER CANDIDATE (N=43)")
+    print(f"DETAILED HOLDOUT TEST EVALUATION PER CANDIDATE (N={len(y_test)})")
     print("=" * 80)
     for r in results:
         print(f"\n>>> Model: {r['name']}")
@@ -270,7 +270,7 @@ def run_experiment():
         print(f"  Actual Not Placed (0)       {r['tn']:2d}                 {r['fp']:2d}")
         print(f"  Actual Placed (1)           {r['fn']:2d}                 {r['tp']:2d}")
         print(f"\nKey Metrics:")
-        print(f"  - Overall Accuracy:        {r['test_acc']*100:.2f}% ({r['tn']+r['tp']}/43 correct)")
+        print(f"  - Overall Accuracy:        {r['test_acc']*100:.2f}% ({r['tn']+r['tp']}/{len(y_test)} correct)")
         print(f"  - Placed Precision:        {r['test_prec']*100:.2f}% (when predicted Placed, {r['tp']}/{r['tp']+r['fp']} correct)")
         print(f"  - Placed Recall:           {r['test_rec']*100:.2f}% ({r['tp']}/{r['tp']+r['fn']} placed students caught)")
         print(f"  - Not Placed Specificity:  {r['not_placed_rec']*100:.2f}% ({r['tn']}/{r['tn']+r['fp']} unplaced students correctly identified)")
